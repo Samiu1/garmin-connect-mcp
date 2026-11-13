@@ -22,7 +22,7 @@ import { registerProfileTools } from "./tools/profile.js";
 import { registerRawTools } from "./tools/raw.js";
 import { registerWomensHealthTools } from "./tools/womens-health.js";
 
-const SERVER_NAME = "garmin-personal-mcp-server";
+const SERVER_NAME = "garmin-connect-mcp";
 const SERVER_VERSION = "1.0.0";
 
 /**

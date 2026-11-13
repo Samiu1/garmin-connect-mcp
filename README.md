@@ -1,4 +1,4 @@
-# garmin-personal-mcp-server
+# garmin-connect-mcp
 
 An MCP server for the [Garmin Connect Personal API](https://developer.garmin.com/gc-developer-program/personal/personal-api/). Each user brings their own Personal API key, so the server holds no shared credentials and can be installed by anyone with a Garmin account.
 
@@ -11,13 +11,52 @@ Ten tools cover all 26 endpoints in the Personal API, plus a passthrough for any
 
 ## Get a Personal API key
 
-1. Open <https://connect.garmin.com/app/settings/personalApiToken> while signed in to Garmin Connect.
-2. Choose **Create Key**, accept the terms, and pick an expiration: 30, 90, or 180 days, or one year.
-3. Copy the key. **It is shown once and cannot be retrieved again.**
+The Personal API gives you read access to **your own** Garmin Connect data with a key you issue yourself. There is no OAuth app to register and no approval process.
 
-Garmin emails a reminder about a week before the key expires. Deleting a key immediately invalidates it and every access token made from it.
+**Before you start:** you need a Garmin Connect account with at least one synced device. The key page exists only on Garmin Connect **web** — it is not in the mobile app.
 
-The Personal API is for reading your own data. Garmin states it is not intended for commercial applications serving multiple end users.
+### Steps
+
+1. **Sign in** to Garmin Connect: <https://connect.garmin.com>
+2. **Open the Personal API token page:** <https://connect.garmin.com/app/settings/personalApiToken>
+   In the web UI you can also reach it under **Settings → Account → Personal API Token**.
+3. Choose **Create Key**.
+4. **Accept the terms.** They cover personal, non-commercial use.
+5. **Pick an expiration:** 30 days, 90 days, 180 days, or one year. Longer means fewer rotations; shorter limits the damage if the key leaks.
+6. Choose **Create**.
+7. **Copy the key immediately.** It is shown once and cannot be retrieved afterwards. If you lose it, delete that key and create another.
+8. **Store it** — see [Store your key](#store-your-key). Do not paste it into an interactive terminal prompt; the warning there explains why.
+9. **Check it works** — see [Verify the key works](#verify-the-key-works) — before configuring any client.
+
+### What the key looks like
+
+A URL-safe string of roughly 130 characters, containing dots. One real key measured exactly 133 characters.
+
+That length is worth noting, because a **truncated key is the hardest failure to diagnose**: it has a valid shape, and Garmin rejects it with `HTTP 401` and an empty body, which is identical to how it rejects an expired or deleted key. Always compare the number of characters you stored against the key you copied.
+
+### Expiry and rotation
+
+Garmin emails a reminder about a week before a key expires. When it does, create a new one and re-store it — nothing else about your setup changes. Deleting a key invalidates it immediately, along with every access token issued from it.
+
+### Troubleshooting
+
+| What you see | Likely cause |
+| --- | --- |
+| `HTTP 401`, empty body, on the token request | Key truncated, expired, or deleted. Compare the stored length, and confirm a key is still listed on the token page. |
+| `HTTP 400` on the token request | No `Authorization` header reached Garmin. |
+| `HTTP 400` on a data request | A malformed date, or a range longer than that metric allows — see [Undocumented date-range limits](#undocumented-date-range-limits). |
+| No key listed on the token page | It expired or was deleted. Create a new one. |
+| Server exits at startup with "No Garmin Personal API key found" | None of the three sources supplied a key, or an MCP client did not pass the variable through to the server process. |
+
+### Reference
+
+- [Personal API overview](https://developer.garmin.com/gc-developer-program/personal/personal-api/) — what the program is, and the token-exchange call
+- [Personal API FAQ](https://developer.garmin.com/gc-developer-program/personal/personal-faq/) — terms, expiry options, what the key covers
+- [Personal API Swagger docs](https://developer.garmin.com/gc-developer-program/personal/swagger-docs/) — the endpoint reference this server implements
+- [Garmin's official Python client](https://github.com/garmin/connect-personal-api-python) — reads the same key-file path this server does
+- [Garmin Connect Developer Program](https://developer.garmin.com/gc-developer-program/overview/) — the business and enterprise programs, if you outgrow personal use
+
+**Scope:** the Personal API is for your own data. Garmin states it is not intended for commercial applications serving multiple end users; the developer program above covers that case.
 
 ## Store your key
 
@@ -42,14 +81,6 @@ K=$(pbpaste | tr -d '\r\n'); security add-generic-password -a "$USER" -s garmin-
 ```
 
 That prints `round-trip OK` with the character count, or tells you the two lengths disagree. One caveat of passing the key as an argument this way: it is briefly visible to `ps` for other processes on the machine. On a single-user machine that is a small exposure; if it matters to you, use option B, which avoids it entirely.
-
-Confirm Garmin accepts it before wiring anything up:
-
-```bash
-curl -sS -o /dev/null -w 'token exchange: HTTP %{http_code}\n' -X POST "https://personal.connectapi.garmin.com/personalapitoken-service/personal-api/personal-api-key/token" -H 'Accept: */*' -H "Authorization: ApiKey $(security find-generic-password -s garmin-personal-api -w | tr -d '\n')"
-```
-
-`HTTP 200` means the key works. `HTTP 401` means Garmin rejected it — check that a key is listed at <https://connect.garmin.com/app/settings/personalApiToken>, and that the stored length matches what you copied.
 
 Then point the server at it:
 
@@ -84,12 +115,18 @@ On Linux, replace `pbpaste` with `xclip -o -selection clipboard` or `wl-paste`, 
 
 Avoid `read -rs` and other interactive prompts for this, for the reason given in option A: a prompt can truncate a long key without saying so.
 
+On Windows, write the file from the clipboard with PowerShell, then confirm the length:
+
+```powershell
+$dir = "$HOME\.config\garmin"; New-Item -ItemType Directory -Force -Path $dir | Out-Null; $k = (Get-Clipboard) -replace '\s',''; [IO.File]::WriteAllText("$dir\connect-personal-api-key", $k); "stored $($k.Length) chars"
+```
+
 ### Option C: environment variable
 
 Best for a one-off run, a CI job, or a shell where you want to override the others temporarily:
 
 ```bash
-GARMIN_PERSONAL_API_KEY=... npx garmin-personal-mcp-server
+GARMIN_PERSONAL_API_KEY=... npx -y @samiul_i/garmin-connect-mcp@1.0.0
 ```
 
 Putting the key in an MCP client's `env` block works, since that reaches the server as this variable. It is the weakest option: it lands in plaintext in a config file that is routinely screenshotted and committed to dotfiles repositories, it has no guaranteed permissions, and it needs editing in every client each time the key expires.
@@ -98,9 +135,30 @@ Note that with options A and C, the MCP client must pass the variable through to
 
 Whichever you choose: the server never logs the key, and warns on stderr if the key file or token cache is readable by other users.
 
+### Verify the key works
+
+Do this before configuring a client, so a bad key fails in one obvious place rather than as a silent tool error later.
+
+From the keychain (option A):
+
+```bash
+curl -sS -o /dev/null -w 'token exchange: HTTP %{http_code}\n' -X POST "https://personal.connectapi.garmin.com/personalapitoken-service/personal-api/personal-api-key/token" -H 'Accept: */*' -H "Authorization: ApiKey $(security find-generic-password -s garmin-personal-api -w | tr -d '\n')"
+```
+
+From the key file (option B):
+
+```bash
+curl -sS -o /dev/null -w 'token exchange: HTTP %{http_code}\n' -X POST "https://personal.connectapi.garmin.com/personalapitoken-service/personal-api/personal-api-key/token" -H 'Accept: */*' -H "Authorization: ApiKey $(tr -d '\n' < ~/.config/garmin/connect-personal-api-key)"
+```
+
+`HTTP 200` means the key works and the server will too. `HTTP 401` means Garmin rejected it — see [Troubleshooting](#troubleshooting).
+
+### All environment variables
+
 | Variable | Default | Purpose |
 | --- | --- | --- |
-| `GARMIN_PERSONAL_API_KEY` | — | Your Personal API key |
+| `GARMIN_PERSONAL_API_KEY` | — | The key itself (option C) |
+| `GARMIN_PERSONAL_API_KEY_COMMAND` | — | A command printing the key (option A) |
 | `GARMIN_PERSONAL_API_BASE_URL` | `https://personal.connectapi.garmin.com` | Set to `https://personal.connectapi.garmin.cn` for Garmin China accounts |
 
 Copy `.env.example` if you prefer a file. Never commit the key.
@@ -114,7 +172,7 @@ With your key in `~/.config/garmin/connect-personal-api-key`, the configuration 
   "mcpServers": {
     "garmin": {
       "command": "npx",
-      "args": ["-y", "garmin-personal-mcp-server@1.0.0"]
+      "args": ["-y", "@samiul_i/garmin-connect-mcp@1.0.0"]
     }
   }
 }
@@ -126,7 +184,7 @@ Where that goes:
 | --- | --- |
 | Claude Desktop (macOS) | `~/Library/Application Support/Claude/claude_desktop_config.json` |
 | Claude Desktop (Windows) | `%APPDATA%\Claude\claude_desktop_config.json` |
-| Claude Code | `.mcp.json` in the project, or `claude mcp add garmin -- npx -y garmin-personal-mcp-server@1.0.0` |
+| Claude Code | `.mcp.json` in the project, or `claude mcp add garmin -- npx -y @samiul_i/garmin-connect-mcp@1.0.0` |
 | Cursor | `~/.cursor/mcp.json` |
 
 Restart the client after editing, then ask it something like "what did my Garmin record yesterday?"
@@ -140,7 +198,7 @@ If you chose the keychain (option A), add the command instead. This is still a c
   "mcpServers": {
     "garmin": {
       "command": "npx",
-      "args": ["-y", "garmin-personal-mcp-server@1.0.0"],
+      "args": ["-y", "@samiul_i/garmin-connect-mcp@1.0.0"],
       "env": {
         "GARMIN_PERSONAL_API_KEY_COMMAND": "security find-generic-password -s garmin-personal-api -w"
       }
@@ -150,6 +208,24 @@ If you chose the keychain (option A), add the command instead. This is still a c
 ```
 
 If you would rather paste the key itself, use `"env": { "GARMIN_PERSONAL_API_KEY": "your-key-here" }` and read the trade-offs in [Store your key](#store-your-key) first.
+
+## What you can ask
+
+Once it is connected, these all work as plain requests. Each maps onto one or two tool calls.
+
+- "How did I sleep last night?" → `garmin_get_daily_health` with `metrics=["sleep"]`
+- "Show my sleep trend this month" → `garmin_get_health_trend`, `metric="sleep"`
+- "What's my resting heart rate doing over the last three weeks?" → `garmin_get_health_trend`, `metric="daily_summaries"`
+- "List my runs in October" → `garmin_search_activities` with `activity_type="running"` and a date range
+- "Break down my longest ride this year" → `garmin_search_activities` sorted by distance, then `garmin_get_activity`
+- "Was yesterday a recovery day?" → `garmin_get_daily_health` with `metrics=["summary","sleep","hrv"]`
+- "Which heart-rate zone was my last race in?" → `garmin_get_activity` plus `garmin_get_heart_rate_zones`
+- "Save the GPS file from my last hike" → `garmin_search_activities`, then `garmin_download_activity_file`
+
+Two things to expect, both deliberate:
+
+- **Figures come back in Garmin's units** — metres and seconds — regardless of your display preferences. Ask for your preferred units, or have the client call `garmin_get_user_profile` first.
+- **Missing data is reported as missing, never as zero.** If a metric your device does not record is requested, the response names it under `metrics_unavailable` rather than returning `0`.
 
 ## Develop
 
@@ -170,7 +246,7 @@ npm run dev
 ```
 
 - `npm run build` compiles to `dist/`, with `dist/index.js` as the entry point.
-- `npm run smoke` starts the built server and exercises it as a client. It passes **without** credentials, checking the tool manifest, argument validation, and path safety. With `GARMIN_PERSONAL_API_KEY` set it also makes live read-only calls.
+- `npm run smoke` starts the built server and exercises it as a client. It passes **without** credentials, checking the tool manifest, argument validation, path safety, and the key-command failure modes. It prints which credential source it found, and if any of the three supplies a key it also makes live read-only calls: a month of each wide metric, the summary-versus-full size difference, and the date-range limits.
 - `npm run dev` runs from source with reload.
 - `npx @modelcontextprotocol/inspector node dist/index.js` opens an interactive UI.
 
@@ -182,11 +258,15 @@ npm run dev
 npm publish
 ```
 
-Before the first publish: claim the name with `npm view garmin-personal-mcp-server`, and add `repository`, `homepage`, and `bugs` fields to `package.json` once the code is on a git host — npm renders them on the package page.
+Before the first publish:
+
+- The package publishes as **`@samiul_i/garmin-connect-mcp`**. Scoped packages default to restricted, so `publishConfig.access` is set to `public` in `package.json`; without it, `npm publish` fails or publishes privately.
+- Add `repository`, `homepage`, and `bugs` to `package.json` once the code is on a git host. npm renders them on the package page, and their absence is the most visible gap on a fresh listing.
+- `npm whoami` to confirm you are logged in.
 
 Only `dist/`, `README.md`, and `LICENSE` ship. Verify with `npm pack --dry-run`.
 
-### Transport
+## Transport
 
 stdio only, by design. The client launches the server as a subprocess, and the Personal API key never leaves the user's machine.
 
@@ -256,9 +336,7 @@ Three things follow from that:
 
   **Measured: this saves about 2%, not the large win originally assumed.** Across 88.6 KB of real payloads from one account, pruning removed 1.7 KB. The premise was wrong: Garmin largely *omits* fields it has no data for rather than returning them as `null`, so responses are dense, not null-padded. What actually drives response size is time-series data — a single day of `dailyHeartRate` is 14 KB of real readings. Pruning is kept because it is free, keeps Markdown readable, and may matter more on accounts sparser than the one measured, but the levers that matter are `detail_level` and narrow date ranges.
 - **Availability is stated, not implied.** `garmin_get_daily_health` always returns `metrics_with_data` and `metrics_unavailable`, plus a note explaining that an unavailable metric means absent sensor, disabled feature, unworn device, or unsynced data — never a zero reading. Without this, pruning and a genuine zero look the same to a model.
-- **Summary and deep dive are separate.** `garmin_get_activity` defaults to `detail_level="summary"` (~22 sport-agnostic fields) and offers `"full"`. `garmin_get_health_trend` takes one metric per call so responses stay bounded.
-
-  Both health tools take `detail_level`, defaulting to `"summary"`. This is where the real savings are, and unlike pruning they were worth measuring:
+- **Summary and deep dive are separate.** `garmin_get_activity`, `garmin_get_daily_health` and `garmin_get_health_trend` all take `detail_level`, defaulting to `"summary"`, and the trend tool takes one metric per call so responses stay bounded. This is where the real savings are, and unlike pruning they were worth measuring:
 
   | Request | `full` | `summary` |
   | --- | --- | --- |
@@ -276,7 +354,7 @@ A tempting design is to query the user's hardware at startup and register only t
 
 1. **There is no device endpoint.** The Personal API has 26 paths and none of them list devices. `DeviceMetaDataDTO` is referenced by exactly one schema, `WellnessActivitySummaryDTO`, so it identifies the device that recorded one wellness activity. `UserSettingsDTO` carries only display and locale preferences, with no capability flags.
 2. **Capability does not imply data.** A top-end watch still returns nothing for sleep on a night it was not worn, or for a feature enabled last week. Gating on hardware would hide working tools and keep non-working ones.
-3. **It would make startup fragile and requests costlier.** Under `TRANSPORT=http` the server factory runs once per request, so a capability handshake inside it adds a Garmin round-trip to every request. Making tool registration depend on a network call also turns an expired key into a server that will not start, instead of a per-call error the model can report.
+3. **It would make startup fragile.** Making tool registration depend on a network call turns an expired key into a server that will not start, instead of a per-call error the model can report. It would also add a Garmin round-trip to startup, and to every request under any future HTTP transport, where the server factory runs per request.
 
 Grouping already keeps the manifest at ten tools, so gating would remove one or two at best.
 
