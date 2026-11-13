@@ -296,7 +296,7 @@ Provenance cannot be added to an already-published version, so it begins with th
 
 stdio only, by design. The client launches the server as a subprocess, and the Personal API key never leaves the user's machine.
 
-There is deliberately no HTTP transport. The SDK's HTTP handler verifies no tokens of its own, and this server reads a person's complete health history, so an HTTP listener would need authentication in front of it to be safe off-device. Shipping one unauthenticated in a public package would invite exactly that mistake. See `docs/roadmap.md` if you want to add HTTP and auth together.
+There is deliberately no HTTP transport. The SDK's HTTP handler verifies no tokens of its own, and this server reads a person's complete health history, so an HTTP listener would need authentication in front of it to be safe off-device. Shipping one unauthenticated in a public package would invite exactly that mistake.
 
 ## Architecture
 

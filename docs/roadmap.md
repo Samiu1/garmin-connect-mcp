@@ -9,6 +9,7 @@ v1.0.0 — all 26 Garmin Connect Personal API endpoints covered by 10 tools, plu
 Per-metric field projections are implemented: `detail_level="summary"` is the default on both health tools, and a month of sleep, daily summaries or body battery now fits where it previously exceeded the response limit.
 
 Measured on that account:
+
 - Pruning empty values saves ~2% (1.7 KB across 88.6 KB), not the large win assumed. Garmin omits absent fields rather than nulling them; size is driven by time-series data.
 - A single day of `dailyHeartRate` is 14 KB. 7 nights of `sleep` is 21.6 KB. 30 nights is 91 KB.
 - `activity-service/activity/{id}` returned 13 keys, far fewer than the 230 the schema allows, so the summary projection rarely drops much.
@@ -33,35 +34,28 @@ The spec is not vendored here, to avoid redistributing Garmin's document. Re-ext
 ## Next
 
 ### Remaining live verification
+
 Already confirmed: the token exchange returns a 3-segment JWT whose `exp` parses and sits 23.94 hours out; the cache is written `0600` with the `fingerprint`/`access_token`/`expires_at` shape and is reused by a separate process without re-exchanging; all seven `garmin_get_daily_health` metrics return data on the test account; Markdown rendering was exercised on a real 7-night sleep payload.
 
 Still open:
+
 - The forced re-exchange inside the one-hour refresh window. Needs an injectable clock to test without waiting 23 hours — worth adding, since this is the path that keeps long-running sessions alive.
 - Markdown rendering on a real *activity* payload, as opposed to a health payload.
 - `garmin_download_activity_file` against a real activity, including the `overwrite=false` refusal. Skipped so far because it writes to disk.
 
 ### Resolve the spec-versus-client gap
+
 Garmin's Python client wraps two endpoints absent from the published OpenAPI document: `/activity-service/activity/activityTypes/simple` and `/metrics-service/metrics/maxmet/daily/...` (VO2 max). Probe both with `garmin_get_raw`. If they respond, give them real tools — activity types would make `activity_type` on search discoverable, and VO2 max belongs in `garmin_get_health_trend`.
 
 ### Data-dependent evaluations
+
 `evals/evaluation.xml` holds only questions with stable, account-independent answers. Add a private companion file generated against a real account, choosing questions over closed past periods so answers do not drift.
 
 ## Considered and rejected
 
 ### Interactive prompts for key entry
+
 Documented, then removed. `security add-generic-password -w` with no value, and `read -rs`, both read from the tty, and in testing the former stored only the first 128 characters of a 133-character key with no error. The truncated key has a plausible shape and fails with `HTTP 401` and an empty body, which is indistinguishable from an expired key — hours of debugging for a silent 5-character loss. Root cause unproven; 128 being exactly 2^7 suggests a fixed buffer. Setup now reads the clipboard and verifies the stored length round-tripped, which is safe whatever the cause.
-
-
-### Gating tools on device capability
-Registering only the tools a user's watch supports. Rejected: the Personal API exposes no device inventory (`DeviceMetaDataDTO` describes the device behind a single wellness activity; `UserSettingsDTO` carries only display preferences), capability would not predict data presence anyway, and a startup handshake would add a round-trip per HTTP request and make an expired key prevent startup. Availability is reported per response instead. See README, "Why tools are not gated on device capability".
-
-### Shipping a Streamable HTTP transport
-Built, then removed before publishing. The SDK's HTTP handler verifies no tokens, and this server reads a person's full health history, so an HTTP listener is only safe with authentication in front of the route. Publishing one unauthenticated to npm would make that the default mistake. Removing it also dropped the runtime dependencies from five to two, which matters for a package people fetch with `npx -y`.
-
-To bring it back, add it together with its auth: `requireBearerAuth` on the `/mcp` route with `expectedResource` set to the server's own URL, a `HOST` environment variable so it can bind `0.0.0.0` in a container, and `allowedHosts` for the Host-header check. Do not add the transport without the auth.
-
-### Hand-written Zod schemas for all 109 response types
-Rejected for now: high maintenance against an API that changes without notice, and the generic renderer cannot throw on an unexpected shape. Revisit for the handful of payloads worth strong typing, most likely daily summary and activity summary, where a typed shape would let tools compute derived values such as week-over-week deltas.
 
 ## Later
 
