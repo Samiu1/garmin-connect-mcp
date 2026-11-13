@@ -1,8 +1,18 @@
 # garmin-connect-mcp
 
+[![npm](https://img.shields.io/npm/v/@samiul_i/garmin-connect-mcp)](https://www.npmjs.com/package/@samiul_i/garmin-connect-mcp)
+[![license](https://img.shields.io/npm/l/@samiul_i/garmin-connect-mcp)](LICENSE)
+[![CI](https://github.com/Samiu1/garmin-connect-mcp/actions/workflows/ci.yml/badge.svg)](https://github.com/Samiu1/garmin-connect-mcp/actions/workflows/ci.yml)
+
 An MCP server for the [Garmin Connect Personal API](https://developer.garmin.com/gc-developer-program/personal/personal-api/). Each user brings their own Personal API key, so the server holds no shared credentials and can be installed by anyone with a Garmin account.
 
 Ten tools cover all 26 endpoints in the Personal API, plus a passthrough for anything Garmin adds later.
+
+```bash
+npx -y @samiul_i/garmin-connect-mcp
+```
+
+That needs a key first — see [Get a Personal API key](#get-a-personal-api-key), then [Install in a client](#install-in-a-client).
 
 ## Requirements
 
@@ -265,6 +275,22 @@ Before the first publish:
 - `npm whoami` to confirm you are logged in.
 
 Only `dist/`, `README.md`, and `LICENSE` ship. Verify with `npm pack --dry-run`.
+
+### Releasing from CI (preferred)
+
+`.github/workflows/release.yml` publishes on a `v*` tag and adds **npm provenance**: a signed attestation tying the published tarball to this repository and the exact commit that built it. Publishing from a laptop cannot produce that, however careful you are, because the point is that an independent builder attests to it.
+
+One-time setup: create a **granular access token** at <https://www.npmjs.com/settings/samiul_i/tokens> scoped to the `@samiul_i` scope with **Read and write** package permission, and add it as the repository secret `NPM_TOKEN` under Settings → Secrets and variables → Actions. This is the one place a long-lived write token is the right choice — nobody can type a one-time code in CI.
+
+Then each release is:
+
+```bash
+npm version patch && git push --follow-tags
+```
+
+`npm version` bumps `package.json`, commits, and tags. The workflow checks the tag matches the version, builds, runs the self-check, and publishes. A mismatch fails before the registry call.
+
+Provenance cannot be added to an already-published version, so it begins with the first release made this way.
 
 ## Transport
 
