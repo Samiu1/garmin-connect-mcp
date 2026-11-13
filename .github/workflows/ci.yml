@@ -19,6 +19,21 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci
+
+      # The README pins an exact version in its install examples, so that a
+      # future release cannot silently receive someone's API key. That pin rots
+      # on every version bump, which a human will forget, so check it here
+      # rather than trusting memory.
+      - name: Check README version pins match package.json
+        run: |
+          PKG="$(node -p "require('./package.json').version")"
+          BAD="$(grep -o '@samiul_i/garmin-connect-mcp@[0-9][0-9.]*' README.md | sort -u | grep -v "@$PKG\$" || true)"
+          if [ -n "$BAD" ]; then
+            echo "::error::README pins $BAD but package.json is $PKG"
+            exit 1
+          fi
+          echo "README pins match $PKG"
+
       - run: npx tsc --noEmit
       - run: npm run build
       - run: npm run smoke
