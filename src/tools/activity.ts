@@ -52,6 +52,40 @@ const ACTIVITY_SUMMARY_FIELDS = [
   "deviceId",
 ] as const;
 
+/**
+ * Fields worth showing from `summaryDTO`, whatever the sport.
+ *
+ * The detail endpoint names a few figures differently from the search endpoint:
+ * aerobic training effect is `trainingEffect` here, and `steps`, `vO2MaxValue`
+ * and `deviceId` are absent from this payload altogether.
+ */
+const ACTIVITY_DETAIL_SUMMARY_FIELDS = [
+  "startTimeLocal",
+  "distance",
+  "duration",
+  "movingDuration",
+  "elapsedDuration",
+  "calories",
+  "averageHR",
+  "maxHR",
+  "averageSpeed",
+  "maxSpeed",
+  "elevationGain",
+  "elevationLoss",
+  "trainingEffect",
+  "anaerobicTrainingEffect",
+  "trainingEffectLabel",
+] as const;
+
+/** Top-level keys of the detail payload worth keeping alongside `summaryDTO`. */
+const ACTIVITY_DETAIL_TOP_FIELDS = [
+  "activityId",
+  "activityName",
+  "locationName",
+  "activityTypeDTO",
+  "eventTypeDTO",
+] as const;
+
 function typeKey(value: unknown): string | undefined {
   if (value && typeof value === "object") {
     const key = (value as { typeKey?: unknown }).typeKey;
@@ -95,6 +129,41 @@ function pickSummaryFields(activity: Record<string, unknown>): Record<string, un
   for (const field of ACTIVITY_SUMMARY_FIELDS) {
     if (field in activity) picked[field] = activity[field];
   }
+  return picked;
+}
+
+/**
+ * Projects the detail endpoint's payload, whose shape differs from the search
+ * endpoint's: every figure sits inside `summaryDTO` and the type objects carry a
+ * `DTO` suffix, so `pickSummaryFields` matches only the activity id, name and
+ * location here. Measured against a real run: 3 of its 22 fields.
+ *
+ * Garmin's own field names and nesting are preserved, so `response_format="json"`
+ * still reports what Garmin sent. What is dropped is bulk the caller did not ask
+ * for at this detail level: `metadataDTO`, `accessControlRuleDTO` and
+ * `splitSummaries`.
+ */
+function pickDetailSummaryFields(
+  activity: Record<string, unknown>
+): Record<string, unknown> {
+  const picked: Record<string, unknown> = {};
+  for (const field of ACTIVITY_DETAIL_TOP_FIELDS) {
+    if (field in activity) picked[field] = activity[field];
+  }
+
+  const summary = activity.summaryDTO;
+  if (!summary || typeof summary !== "object") {
+    // A payload without `summaryDTO` may be flat, as the search endpoint's is.
+    // Fall back to that projection rather than returning identity fields alone.
+    return { ...pickSummaryFields(activity), ...picked };
+  }
+
+  const source = summary as Record<string, unknown>;
+  const projected: Record<string, unknown> = {};
+  for (const field of ACTIVITY_DETAIL_SUMMARY_FIELDS) {
+    if (field in source) projected[field] = source[field];
+  }
+  if (Object.keys(projected).length > 0) picked.summaryDTO = projected;
   return picked;
 }
 
@@ -242,7 +311,7 @@ This covers the common filters; garmin_get_raw reaches the dive-depth, bounding-
       title: "Get Activity Detail",
       description: `Get one activity in detail by its ID, optionally with its structured workout steps.
 
-detail_level="summary" (the default) returns the ~22 fields that apply to any sport. detail_level="full" returns all available fields, which for a single activity can exceed 200 properties covering dive, golf, and other sport-specific sensors.
+detail_level="summary" (the default) returns the sport-agnostic key fields: the activity's identity and type, plus the figures Garmin groups under summaryDTO -- distance, duration, calories, heart rate, speed, elevation and training effect. detail_level="full" returns all available fields, which for a single activity can exceed 200 properties covering dive, golf, and other sport-specific sensors.
 
 Use garmin_search_activities to find activity IDs.`,
       inputSchema: z.strictObject({
@@ -292,7 +361,9 @@ Use garmin_search_activities to find activity IDs.`,
       const payload: Record<string, unknown> = {
         activity_id: args.activity_id,
         activity:
-          args.detail_level === "full" ? activity : pickSummaryFields(activity),
+          args.detail_level === "full"
+            ? activity
+            : pickDetailSummaryFields(activity),
       };
       if (args.include_workouts) {
         payload.workouts = workouts ?? [];

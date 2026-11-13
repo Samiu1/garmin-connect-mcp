@@ -2,9 +2,9 @@
 
 ## Status
 
-v1.0.0 — all 26 Garmin Connect Personal API endpoints covered by 10 tools, plus a passthrough. stdio transport only. Three credential sources: environment variable, a key command for OS keychains and password managers, and a key file. Packaged for npm but not yet published.
+v1.0.1 — all 26 Garmin Connect Personal API endpoints covered by 10 tools, plus a passthrough. stdio transport only. Three credential sources: environment variable, a key command for OS keychains and password managers, and a key file. Published to npm as `@samiul_i/garmin-connect-mcp`, built and released from CI with provenance.
 
-**Verified live against a real Garmin account.** The self-check passes with credentials, and all 25 pullable endpoints were probed directly: 23 returned data, 2 returned `204` (women's health, not tracked on that account), and none 404'd, so every path in the client is correct. The file-download endpoint was not probed because it writes to disk.
+**Verified live against a real Garmin account.** The self-check passes with credentials, and all 25 pullable endpoints were probed directly: 23 returned data, 2 returned `204` (women's health, not tracked on that account), and none 404'd, so every path in the client is correct. The file-download endpoint has since been exercised too, against a real activity.
 
 Per-metric field projections are implemented: `detail_level="summary"` is the default on both health tools, and a month of sleep, daily summaries or body battery now fits where it previously exceeded the response limit.
 
@@ -12,7 +12,8 @@ Measured on that account:
 
 - Pruning empty values saves ~2% (1.7 KB across 88.6 KB), not the large win assumed. Garmin omits absent fields rather than nulling them; size is driven by time-series data.
 - A single day of `dailyHeartRate` is 14 KB. 7 nights of `sleep` is 21.6 KB. 30 nights is 91 KB.
-- `activity-service/activity/{id}` returned 13 keys, far fewer than the 230 the schema allows, so the summary projection rarely drops much.
+- `activity-service/activity/{id}` returns a **different shape** from the search endpoint, not merely a smaller one: 13 top-level keys, with every figure nested in `summaryDTO` and the type objects suffixed (`activityTypeDTO`, `eventTypeDTO`). The flat field list written for search matched only 3 of its 22 names, so `detail_level="summary"` returned an activity name and a city and nothing else — no distance, duration, heart rate or calories. Fixed with a second, shape-aware projection in `src/tools/activity.ts`; an earlier note here read the 13 keys as "the projection rarely drops much", which inverted the finding. On this payload `steps`, `vO2MaxValue` and `deviceId` do not exist at all, and aerobic training effect is named `trainingEffect`.
+- Sleep is **not** an activity in Garmin's model, so it has no file to download. Over a full year this account returned 3 wellness activities, all `wellnessActivityType: "HEALTH_MONITORING"` (Health Snapshot), none sleep-related. Wellness entries carry no `activityId` of any kind — `userProfilePk`, `activityUuid` and `rulePK` instead — so `garmin_download_activity_file` is unreachable from `garmin_get_wellness_activities`; `garmin_search_activities` is its only source of IDs. A 365-day wellness range was accepted.
 - Garmin caps `steps` and `stress` at 28 days per request and `hydration` at 31, answering anything longer with a bare `HTTP 400`. Not in the spec; found by bisection. `hrv`, `weight` and wellness activities accepted a full year.
 - `usersummary-service/v2/dailysummaries` groups figures into nested category objects (`movement.steps`, `heartRate.restingValue`) rather than the flat names `usersummary/daily` uses, so projections need explicit paths per version.
 
@@ -37,11 +38,14 @@ The spec is not vendored here, to avoid redistributing Garmin's document. Re-ext
 
 Already confirmed: the token exchange returns a 3-segment JWT whose `exp` parses and sits 23.94 hours out; the cache is written `0600` with the `fingerprint`/`access_token`/`expires_at` shape and is reused by a separate process without re-exchanging; all seven `garmin_get_daily_health` metrics return data on the test account; Markdown rendering was exercised on a real 7-night sleep payload.
 
+Also confirmed since: `garmin_download_activity_file` against a real recorded activity, which wrote a 76 KB ZIP holding one valid 377,750-byte FIT file, refused correctly with `overwrite=false`, and replaced the file with `overwrite=true`; Markdown rendering on real *activity* payloads at both detail levels across running, strength training and indoor cardio.
+
 Still open:
 
 - The forced re-exchange inside the one-hour refresh window. Needs an injectable clock to test without waiting 23 hours — worth adding, since this is the path that keeps long-running sessions alive.
-- Markdown rendering on a real *activity* payload, as opposed to a health payload.
-- `garmin_download_activity_file` against a real activity, including the `overwrite=false` refusal. Skipped so far because it writes to disk.
+- The empty-response branch in `apiGetBinary` (`src/api.ts`), which throws a bare `Error` rather than a `GarminApiError` and so bypasses the recovery messages in `errors.ts`. Sleep looked like a way to reach it and is not one, per the note above; no real activity has produced an empty body.
+- Activity ZIPs are written with the process umask, measured as mode `644`, while the server warns on stderr about group-readable *credential* files. A FIT file holds the route's GPS trace, so the two postures disagree. The caller chooses the path, so this is a judgement call rather than a defect.
+- `detail_level="full"` on an activity renders `userProfileId`, `displayname`, `fullname` and three S3 profile-image URLs. The user's own data, so not a leak, but noise in every full render.
 
 ### Resolve the spec-versus-client gap
 
