@@ -14,11 +14,13 @@ import { apiGet, type QueryValue } from "../api.js";
 import {
   assertOrderedRange,
   dateSchema,
+  detailLevelSchema,
   formatResult,
   includeEmptyFieldsSchema,
   jsonResult,
   markdownResult,
   partitionAvailability,
+  projectPayload,
   renderJsonAsMarkdown,
   ResponseFormat,
   responseFormatSchema,
@@ -55,10 +57,98 @@ const TREND_METRICS = [
 
 type TrendMetric = (typeof TREND_METRICS)[number];
 
+/**
+ * Longest range Garmin accepts per request, measured empirically — these limits
+ * are not in the OpenAPI document and the API answers an over-long range with a
+ * bare HTTP 400. Metrics absent from this map accepted a full year in testing.
+ */
+const MAX_RANGE_DAYS: Partial<Record<TrendMetric, number>> = {
+  steps: 28,
+  stress: 28,
+  hydration: 31,
+};
+
+/** Rejects an over-long range locally, with the limit named. */
+function assertWithinMetricLimit(
+  metric: TrendMetric,
+  startDate: string,
+  endDate: string
+): void {
+  const max = MAX_RANGE_DAYS[metric];
+  if (max === undefined) return;
+  const days =
+    Math.round((Date.parse(endDate) - Date.parse(startDate)) / 86_400_000) + 1;
+  if (days > max) {
+    throw new Error(
+      `Garmin accepts at most ${max} days per request for '${metric}', but ${startDate} to ${endDate} is ${days} days. ` +
+        `Split it into ${Math.ceil(days / max)} calls of up to ${max} days each.`
+    );
+  }
+}
+
 interface Request {
   path: string;
   query: Record<string, QueryValue>;
 }
+
+/**
+ * Explicit field lists for metrics whose bulk sits in nested objects rather than
+ * in long arrays, so the generic summariser cannot shrink them enough.
+ *
+ * Sleep is the case that forced this: a night is ~3 KB, of which `sleepScores`,
+ * `sleepNeed` and `sleepAlignment` are ~1.9 KB, while the stage totals a caller
+ * asks for are a few hundred bytes. The dotted path keeps the one figure worth
+ * having out of the bulky object.
+ */
+const SUMMARY_PATHS: Record<string, readonly string[]> = {
+  // A month of these is 75 KB unprojected. Note that v2 groups figures into
+  // nested category objects with their own names -- `bodyBattery.activityEvents`,
+  // not `bodyBatteryActivityEventList` -- so the name-based omit list does not
+  // reach them and explicit paths are required.
+  daily_summaries: [
+    "calendarDate",
+    "movement.steps",
+    "movement.floorsAscended",
+    "calories.burnedTotal",
+    "calories.burnedActive",
+    "calories.burnedResting",
+    "heartRate.restingValue",
+    "heartRate.maxValue",
+    "heartRate.minValue",
+    "stress.avgLevel",
+    "stress.maxLevel",
+    "stress.qualifier",
+    "bodyBattery.maxValue",
+    "bodyBattery.minValue",
+    "bodyBattery.chargedValue",
+    "bodyBattery.drainedValue",
+    "intensityMinutes.moderate",
+    "intensityMinutes.vigorous",
+    "intensityMinutes.goal",
+    "pulseOx.avgValue",
+    "pulseOx.minValue",
+    "respiration.avgValue",
+  ],
+  sleep: [
+    "calendarDate",
+    "sleepStartTimestampLocal",
+    "sleepEndTimestampLocal",
+    "sleepTimeSeconds",
+    "deepSleepSeconds",
+    "lightSleepSeconds",
+    "remSleepSeconds",
+    "awakeSleepSeconds",
+    "napTimeSeconds",
+    "awakeCount",
+    "avgHeartRate",
+    "avgSleepStress",
+    "averageRespirationValue",
+    "averageSpO2Value",
+    "lowestSpO2Value",
+    "breathingDisruptionSeverity",
+    "sleepScores.overall",
+  ],
+};
 
 function dailyRequest(metric: DailyMetric, date: string): Request {
   switch (metric) {
@@ -170,6 +260,7 @@ For one metric across many days, use garmin_get_health_trend instead.`,
         metrics: z.array(z.enum(DAILY_METRICS)).min(1)
           .default(["summary", "sleep", "heart_rate", "hrv"])
           .describe("Which metrics to fetch. Request only what is needed; each adds to the response."),
+        detail_level: detailLevelSchema,
         include_empty_fields: includeEmptyFieldsSchema,
         response_format: responseFormatSchema,
       }),
@@ -208,13 +299,25 @@ For one metric across many days, use garmin_get_health_trend instead.`,
         { prune: !args.include_empty_fields }
       );
 
+      // Availability is judged on the raw payload above, then the projection is
+      // applied. Doing it the other way round would report a metric as
+      // unavailable when its only content was a series the summary omits.
+      const projected: Record<string, unknown> = {};
+      for (const [metric, value] of Object.entries(data)) {
+        projected[metric] =
+          args.detail_level === "full"
+            ? value
+            : projectPayload(value, SUMMARY_PATHS[metric]);
+      }
+
       const payload: Record<string, unknown> = {
         date: args.date,
         metrics_with_data: metricsWithData,
         metrics_unavailable: metricsUnavailable,
         ...(metricsUnavailable.length > 0 ? { unavailable_note: UNAVAILABLE_NOTE } : {}),
         ...(Object.keys(errors).length > 0 ? { metric_errors: errors } : {}),
-        data,
+        detail_level: args.detail_level,
+        data: projected,
       };
 
       // Not formatResult: `data` is already pruned, and the availability lists must
@@ -236,7 +339,7 @@ For one metric across many days, use garmin_get_health_trend instead.`,
           lines.push(`- ${metric}: ${message}`);
         }
       }
-      lines.push("", renderJsonAsMarkdown(data));
+      lines.push("", renderJsonAsMarkdown(projected));
 
       return markdownResult(`Garmin health for ${args.date}`, lines.join("\n"));
     }
@@ -265,6 +368,7 @@ An empty result means no data in that range, not zero values. Narrow the range i
           .describe("body_battery only: intervals per day; each reports its lowest and highest reading"),
         include_all_weigh_ins: z.boolean().default(false)
           .describe("weight only: include every entry per day rather than the latest"),
+        detail_level: detailLevelSchema,
         include_empty_fields: includeEmptyFieldsSchema,
         response_format: responseFormatSchema,
       }),
@@ -277,6 +381,7 @@ An empty result means no data in that range, not zero values. Narrow the range i
     },
     async (args, ctx) => {
       assertOrderedRange(args.start_date, args.end_date);
+      assertWithinMetricLimit(args.metric, args.start_date, args.end_date);
       const request = trendRequest(args.metric, args.start_date, args.end_date, {
         chunks: args.chunks,
         includeAll: args.include_all_weigh_ins,
@@ -301,7 +406,11 @@ An empty result means no data in that range, not zero values. Narrow the range i
         start_date: args.start_date,
         end_date: args.end_date,
         ...(Array.isArray(raw) ? { count: raw.length } : {}),
-        data: raw,
+        detail_level: args.detail_level,
+        data:
+          args.detail_level === "full"
+            ? raw
+            : projectPayload(raw, SUMMARY_PATHS[args.metric]),
       };
 
       return formatResult(

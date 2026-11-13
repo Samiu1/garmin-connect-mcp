@@ -6,17 +6,16 @@ v1.0.0 — all 26 Garmin Connect Personal API endpoints covered by 10 tools, plu
 
 **Verified live against a real Garmin account.** The self-check passes with credentials, and all 25 pullable endpoints were probed directly: 23 returned data, 2 returned `204` (women's health, not tracked on that account), and none 404'd, so every path in the client is correct. The file-download endpoint was not probed because it writes to disk.
 
+Per-metric field projections are implemented: `detail_level="summary"` is the default on both health tools, and a month of sleep, daily summaries or body battery now fits where it previously exceeded the response limit.
+
 Measured on that account:
 - Pruning empty values saves ~2% (1.7 KB across 88.6 KB), not the large win assumed. Garmin omits absent fields rather than nulling them; size is driven by time-series data.
 - A single day of `dailyHeartRate` is 14 KB. 7 nights of `sleep` is 21.6 KB. 30 nights is 91 KB.
 - `activity-service/activity/{id}` returned 13 keys, far fewer than the 230 the schema allows, so the summary projection rarely drops much.
+- Garmin caps `steps` and `stress` at 28 days per request and `hydration` at 31, answering anything longer with a bare `HTTP 400`. Not in the spec; found by bisection. `hrv`, `weight` and wellness activities accepted a full year.
+- `usersummary-service/v2/dailysummaries` groups figures into nested category objects (`movement.steps`, `heartRate.restingValue`) rather than the flat names `usersummary/daily` uses, so projections need explicit paths per version.
 
 ## Next
-
-### Per-metric field projections for health trends
-The highest-value gap, and the reason "my sleep this month" does not work today. `garmin_get_activity` has a curated 22-field projection; health metrics have none, so a trend returns every field Garmin sends. Add `detail_level` to `garmin_get_health_trend` with a curated field set per metric — for `sleep`, something like date, duration, the four stage totals, score, and resting heart rate, rather than all 42 keys per night. That turns a month of sleep from 91 KB into something that fits, and makes Markdown viable again.
-
-Note while doing this: Markdown is currently bulkier than JSON for these payloads, because the generic renderer spends a line per key. A projection fixes both at once.
 
 ### Remaining live verification
 Already confirmed: the token exchange returns a 3-segment JWT whose `exp` parses and sits 23.94 hours out; the cache is written `0600` with the `fingerprint`/`access_token`/`expires_at` shape and is reused by a separate process without re-exchanging; all seven `garmin_get_daily_health` metrics return data on the test account; Markdown rendering was exercised on a real 7-night sleep payload.

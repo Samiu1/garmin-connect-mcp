@@ -123,6 +123,11 @@ const trend = tools.find((tool) => tool.name === "garmin_get_health_trend");
 const trendProps = (trend?.inputSchema as { properties?: Record<string, { description?: string }> })
   .properties;
 assert.ok(trendProps?.metric?.description, "garmin_get_health_trend.metric lost its description");
+assert.ok(trendProps?.detail_level?.description, "garmin_get_health_trend must offer detail_level");
+
+const daily = tools.find((tool) => tool.name === "garmin_get_daily_health");
+const dailyProps = (daily?.inputSchema as { properties?: Record<string, unknown> }).properties;
+assert.ok(dailyProps?.detail_level, "garmin_get_daily_health must offer detail_level");
 
 // ---- Argument validation (no network required) ----
 
@@ -285,6 +290,53 @@ if (!live) {
 
   const zones = await client.callTool({ name: "garmin_get_heart_rate_zones", arguments: {} });
   assert.ok(!zones.isError, `garmin_get_heart_rate_zones failed: ${textOf(zones)}`);
+
+  // A month of sleep must fit. Before per-metric projections this was 91 KB and
+  // came back as an over-limit error, which made an ordinary question unanswerable.
+  const monthAgo = new Date(Date.now() - 30 * 864e5).toISOString().slice(0, 10);
+  const yesterday = new Date(Date.now() - 864e5).toISOString().slice(0, 10);
+
+  for (const metric of ["sleep", "daily_summaries", "body_battery"]) {
+    const month = await client.callTool({
+      name: "garmin_get_health_trend",
+      arguments: { metric, start_date: monthAgo, end_date: yesterday, response_format: "json" },
+    });
+    assert.ok(!month.isError, `a month of ${metric} should fit in summary mode: ${textOf(month)}`);
+  }
+
+  // Summary mode must actually be smaller, or the projection is not doing its job.
+  const asFull = await client.callTool({
+    name: "garmin_get_daily_health",
+    arguments: { date: yesterday, metrics: ["heart_rate"], detail_level: "full", response_format: "json" },
+  });
+  const asSummary = await client.callTool({
+    name: "garmin_get_daily_health",
+    arguments: { date: yesterday, metrics: ["heart_rate"], detail_level: "summary", response_format: "json" },
+  });
+  assert.ok(
+    textOf(asSummary).length * 4 < textOf(asFull).length,
+    `summary should be far smaller than full: ${textOf(asSummary).length} vs ${textOf(asFull).length}`
+  );
+
+  // Garmin caps steps and stress at 28 days with a bare HTTP 400; the server must
+  // refuse locally and name the limit instead of passing that through.
+  const tooLong = await client.callTool({
+    name: "garmin_get_health_trend",
+    arguments: { metric: "steps", start_date: monthAgo, end_date: yesterday },
+  });
+  assert.equal(tooLong.isError, true, "a 30-day steps range should be refused locally");
+  assert.match(textOf(tooLong), /at most 28 days/, "the refusal should name Garmin's limit");
+
+  const atLimit = await client.callTool({
+    name: "garmin_get_health_trend",
+    arguments: {
+      metric: "steps",
+      start_date: new Date(Date.now() - 28 * 864e5).toISOString().slice(0, 10),
+      end_date: yesterday,
+      response_format: "json",
+    },
+  });
+  assert.ok(!atLimit.isError, `28 days of steps is within the limit: ${textOf(atLimit)}`);
 
   console.error("Smoke test passed (live against Garmin).");
 }

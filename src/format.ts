@@ -254,6 +254,155 @@ export function partitionAvailability(
   return { data, metricsWithData, metricsUnavailable };
 }
 
+/**
+ * Field names dropped in summary mode, at any depth.
+ *
+ * Measured on a real account: these carry raw per-sample series and verbose
+ * coaching text, and account for 61-97% of a payload's bytes while the figures a
+ * caller asks for sit in the small scalar remainder. Chosen from observed field
+ * sizes, not guessed.
+ */
+const OMITTED_IN_SUMMARY = new Set([
+  "heartRateValues",
+  "heartRateValueDescriptors",
+  "hrvReadings",
+  "monitoringEnvironmentValues",
+  "monitoringEnvironmentValuesDescriptorList",
+  "spO2HourlyAverages",
+  "spO2HourlyAveragesDescriptorList",
+  "spO2SingleValues",
+  "spO2SingleValuesDescriptorList",
+  "bodyBatteryValuesArray",
+  "bodyBatteryValueDescriptorDTOList",
+  "bodyBatteryActivityEvent",
+  "bodyBatteryActivityEventList",
+  "bodyBatteryDynamicFeedbackEvent",
+  "endOfDayBodyBatteryDynamicFeedbackEvent",
+  "sleepNeed",
+  "nextSleepNeed",
+  "sleepAlignment",
+  "sleepScoreInsight",
+  "sleepScoreFeedback",
+  "sleepScorePersonalizedInsight",
+]);
+
+/** Arrays longer than this are treated as sample series in summary mode. */
+const MAX_SUMMARY_ARRAY_ITEMS = 12;
+
+/**
+ * Removes raw sample series from one record, leaving its scalar summary fields.
+ *
+ * Omissions are replaced with a note rather than deleted silently, so the model
+ * can see that data exists and how to ask for it. Applied per record, never to
+ * the collection itself, so a range still returns one entry per day.
+ */
+export function summarizeRecord(value: unknown, depth = 0): unknown {
+  if (Array.isArray(value)) {
+    // Only raw sample series are collapsed: a long array of primitives or of
+    // [timestamp, value] tuples. An array of records is a collection of days or
+    // entries, and dropping it would discard the result itself — which is what
+    // happened to a 30-day daily_summaries response before this check narrowed.
+    const looksLikeSamples =
+      value.length > MAX_SUMMARY_ARRAY_ITEMS &&
+      value.every(
+        (item) => item === null || typeof item !== "object" || Array.isArray(item)
+      );
+    if (depth > 0 && looksLikeSamples) {
+      return `<${value.length} samples omitted; use detail_level="full" for the full series>`;
+    }
+    return value.map((item) => summarizeRecord(item, depth + 1));
+  }
+  if (value !== null && typeof value === "object") {
+    const result: Record<string, unknown> = {};
+    for (const [key, entry] of Object.entries(value as Record<string, unknown>)) {
+      if (OMITTED_IN_SUMMARY.has(key)) continue;
+      result[key] = summarizeRecord(entry, depth + 1);
+    }
+    return result;
+  }
+  return value;
+}
+
+/**
+ * Keeps only the named fields, where a name may be a dotted path such as
+ * `sleepScores.overall`. Used where a metric needs a specific nested figure that
+ * sits inside an otherwise bulky object.
+ *
+ * Output mirrors the paths rather than flattening them, because flattening
+ * collides: `heartRate.maxValue` and `bodyBattery.maxValue` are different figures
+ * in the same record and both end in `maxValue`.
+ *
+ * A path that does not exist in the record is skipped, so one field list can
+ * cover payloads that vary between accounts or devices.
+ */
+export function pickPaths(
+  record: unknown,
+  paths: readonly string[]
+): Record<string, unknown> {
+  if (record === null || typeof record !== "object" || Array.isArray(record)) {
+    return {};
+  }
+  const out: Record<string, unknown> = {};
+  for (const path of paths) {
+    const segments = path.split(".");
+    let cursor: unknown = record;
+    for (const segment of segments) {
+      if (cursor === null || typeof cursor !== "object") {
+        cursor = undefined;
+        break;
+      }
+      cursor = (cursor as Record<string, unknown>)[segment];
+    }
+    if (cursor === undefined) continue;
+
+    let target = out;
+    for (const segment of segments.slice(0, -1)) {
+      if (typeof target[segment] !== "object" || target[segment] === null) {
+        target[segment] = {};
+      }
+      target = target[segment] as Record<string, unknown>;
+    }
+    target[segments[segments.length - 1]] = cursor;
+  }
+  return out;
+}
+
+/**
+ * Applies a projection to a record, to every record in a collection, or to every
+ * record inside a single-key wrapper object.
+ *
+ * The wrapper case is `usersummary-service/v2/dailysummaries`, which returns the
+ * days nested under one key rather than as a bare array. Without unwrapping, a
+ * per-record field list would be matched against the wrapper and return nothing.
+ */
+export function projectPayload(
+  payload: unknown,
+  paths?: readonly string[]
+): unknown {
+  const one = (record: unknown) =>
+    paths && paths.length > 0 ? pickPaths(record, paths) : summarizeRecord(record);
+
+  if (Array.isArray(payload)) return payload.map(one);
+
+  if (payload !== null && typeof payload === "object") {
+    const entries = Object.entries(payload as Record<string, unknown>);
+    if (entries.length === 1 && Array.isArray(entries[0][1])) {
+      const [key, records] = entries[0];
+      return { [key]: (records as unknown[]).map(one) };
+    }
+  }
+  return one(payload);
+}
+
+/** The `detail_level` argument shared by the health tools. */
+export const detailLevelSchema = z
+  .enum(["summary", "full"])
+  .default("summary")
+  .describe(
+    "'summary' keeps the headline figures and omits raw per-sample series, which is " +
+      "90%+ smaller; 'full' returns everything Garmin sends, including every reading"
+  );
+
 /** Explains an empty result in terms the model can repeat to the user. */
 export const UNAVAILABLE_NOTE =
   "Garmin returned no data for these metrics on this date. That means the sensor is " +

@@ -242,7 +242,7 @@ All tools are read-only except `garmin_download_activity_file`, which writes a Z
 | `garmin_get_menstrual_cycle` | Cycle summary or detailed day view |
 | `garmin_get_raw` | Any Personal API path, for endpoints and parameters the above omit |
 
-Every data tool takes `response_format`: `markdown` (default) for readable text, `json` for exact Garmin field names with `structuredContent`.
+Every data tool takes `response_format`: `markdown` (default) for readable text, `json` for exact Garmin field names with `structuredContent`. `garmin_get_activity`, `garmin_get_daily_health` and `garmin_get_health_trend` also take `detail_level`, defaulting to `summary`.
 
 ## Design decisions
 
@@ -258,7 +258,17 @@ Three things follow from that:
 - **Availability is stated, not implied.** `garmin_get_daily_health` always returns `metrics_with_data` and `metrics_unavailable`, plus a note explaining that an unavailable metric means absent sensor, disabled feature, unworn device, or unsynced data — never a zero reading. Without this, pruning and a genuine zero look the same to a model.
 - **Summary and deep dive are separate.** `garmin_get_activity` defaults to `detail_level="summary"` (~22 sport-agnostic fields) and offers `"full"`. `garmin_get_health_trend` takes one metric per call so responses stay bounded.
 
-  **This is only half done.** Activities get a curated field projection; health metrics do not, and they need one. Measured against a real account: 7 nights of `sleep` is 21.6 KB and already truncates in Markdown, and 30 nights is 91 KB, which exceeds the JSON limit and returns an error asking for a narrower range. Both limit paths behave correctly, but "my sleep this month" is an ordinary request that does not fit. Note also that Markdown is *bulkier* than JSON here — the generic renderer spends a line per key, which costs more than JSON's repeated field names. The fix is a per-metric field projection, as tracked in `docs/roadmap.md`.
+  Both health tools take `detail_level`, defaulting to `"summary"`. This is where the real savings are, and unlike pruning they were worth measuring:
+
+  | Request | `full` | `summary` |
+  | --- | --- | --- |
+  | One day of `heart_rate` | 14,239 B | ~190 B |
+  | 30 nights of `sleep` | over the limit | 19,455 chars |
+  | 30 days of `daily_summaries` | 75,289 chars | 17,336 chars |
+  | 30 days of `body_battery` | over the limit | 8,846 chars |
+  | Daily snapshot, all 7 metrics | over the limit | 7,419 chars |
+
+  Summary mode omits raw per-sample series — `heartRateValues` alone is 720 readings and 97% of a day's heart-rate payload — and keeps the figures callers ask for, such as `restingHeartRate`, `deepSleepSeconds` and `averageSpO2`. Omissions are replaced with a note saying how many samples were dropped and that `detail_level="full"` returns them, so nothing disappears silently. `full` is unchanged and still exceeds the limit on wide ranges, which the tool reports.
 
 ### Why tools are not gated on device capability
 
@@ -269,6 +279,18 @@ A tempting design is to query the user's hardware at startup and register only t
 3. **It would make startup fragile and requests costlier.** Under `TRANSPORT=http` the server factory runs once per request, so a capability handshake inside it adds a Garmin round-trip to every request. Making tool registration depend on a network call also turns an expired key into a server that will not start, instead of a per-call error the model can report.
 
 Grouping already keeps the manifest at ten tools, so gating would remove one or two at best.
+
+### Undocumented date-range limits
+
+Garmin caps some ranges and answers an over-long request with a bare `HTTP 400` and no explanation. The limits are not in the OpenAPI document; these were found by bisecting real requests:
+
+| Metric | Longest accepted range |
+| --- | --- |
+| `steps`, `stress` | 28 days |
+| `hydration` | 31 days |
+| `hrv`, `weight`, `weight_all`, `weight_goals`, wellness activities | 365 days, no limit found |
+
+`garmin_get_health_trend` enforces the known caps locally and says how to split the request, rather than forwarding a `400` that reads like a malformed date. If Garmin changes a limit, the server's message will be wrong before the API's is — the numbers live in `MAX_RANGE_DAYS` in `src/tools/health.ts`.
 
 ### Response validation
 
