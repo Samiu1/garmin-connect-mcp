@@ -1,0 +1,74 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Evaluation questions for garmin-personal-mcp-server.
+
+  Scope note, read this before adding questions.
+
+  The Personal API serves one person's own health data, so answers drawn from it
+  ("how many km did I run in October?") are specific to the account and change as
+  new data syncs. Such answers cannot be committed to a shared eval file and
+  verified by string comparison.
+
+  The questions below are therefore the ones that ARE stable and verifiable: each
+  is answered by using the server to discover its own capabilities, routing, and
+  error behaviour. Every answer here was verified against the running server or
+  the published OpenAPI document, not assumed.
+
+  To evaluate against real health data, generate a private companion file: run
+  each candidate question once with your own GARMIN_PERSONAL_API_KEY, record the
+  answer, and keep that file out of version control. Pick questions whose answers
+  are already in the past and will not shift, such as a completed month's total.
+-->
+<evaluation>
+
+  <qa_pair>
+    <question>Using only the Garmin MCP tools available to you, determine how many separate tools this server exposes. Answer with the number.</question>
+    <answer>10</answer>
+  </qa_pair>
+
+  <qa_pair>
+    <question>Among the Garmin MCP tools, exactly one is not read-only because it writes something to the local filesystem. Give that tool's exact name.</question>
+    <answer>garmin_download_activity_file</answer>
+  </qa_pair>
+
+  <qa_pair>
+    <question>You need every individual weigh-in recorded between two dates, not just the latest reading for each day. Which value of the `metric` argument on garmin_get_health_trend returns that? Answer with the metric value only.</question>
+    <answer>weight_all</answer>
+  </qa_pair>
+
+  <qa_pair>
+    <question>A user asks for their sleep, resting heart rate, and HRV for one specific night. Using the most efficient single Garmin tool for that request, give the exact tool name.</question>
+    <answer>garmin_get_daily_health</answer>
+  </qa_pair>
+
+  <qa_pair>
+    <question>Call a Garmin tool with a date range whose start date is later than its end date, for example start_date 2026-11-13 and end_date 2026-11-01. The server rejects it before contacting Garmin. In the error message, which argument name is reported as being after the other? Answer with the single argument name that appears first in the message.</question>
+    <answer>start_date</answer>
+  </qa_pair>
+
+  <qa_pair>
+    <question>Attempt to use the Garmin passthrough tool with the path "//example.com/data". The request is refused. Quote the two-character prefix the error message says a path must not start with.</question>
+    <answer>//</answer>
+  </qa_pair>
+
+  <qa_pair>
+    <question>Request a daily health snapshot and inspect the response structure. Besides the list of metrics that returned data, the response always carries a second list naming the metrics that returned nothing. Give that field's exact name.</question>
+    <answer>metrics_unavailable</answer>
+  </qa_pair>
+
+  <qa_pair>
+    <question>According to the Garmin tools' own documentation, the Personal API exposes no way to enumerate a user's watches or their sensors. Given that, what is the only way to establish whether a given metric is available for a user? Answer with one word: the verb describing what you must do with the metric.</question>
+    <answer>request</answer>
+  </qa_pair>
+
+  <qa_pair>
+    <question>The garmin_get_activity tool limits how much of an activity it returns by default. Which value of its `detail_level` argument must you pass to receive every field Garmin provides for that activity? Answer with the value only.</question>
+    <answer>full</answer>
+  </qa_pair>
+
+  <qa_pair>
+    <question>Using garmin_search_activities, a user wants only activities Garmin classifies as competitive events rather than ordinary training. Which value should be passed to the `event_type` argument? Answer with the value only.</question>
+    <answer>race</answer>
+  </qa_pair>
+
+</evaluation>

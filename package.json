@@ -1,0 +1,46 @@
+{
+  "name": "garmin-personal-mcp-server",
+  "version": "1.0.0",
+  "description": "MCP server for the Garmin Connect Personal API. Each user supplies their own Personal API key.",
+  "type": "module",
+  "license": "MIT",
+  "author": "Samiul Islam",
+  "bin": {
+    "garmin-personal-mcp-server": "dist/index.js"
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "keywords": [
+    "mcp",
+    "modelcontextprotocol",
+    "model-context-protocol",
+    "garmin",
+    "garmin-connect",
+    "personal-api",
+    "fitness",
+    "health"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "dev": "tsx watch src/index.ts",
+    "smoke": "tsx scripts/smoke.ts",
+    "prepublishOnly": "npm run build && npm run smoke"
+  },
+  "engines": {
+    "node": ">=20.3"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/server": "^2.4.0",
+    "zod": "^4.6.7"
+  },
+  "devDependencies": {
+    "@modelcontextprotocol/client": "^2.4.0",
+    "@types/node": "^24.0.0",
+    "tsx": "^4.23.15",
+    "typescript": "^5.9.3"
+  }
+}
