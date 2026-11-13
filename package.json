@@ -5,6 +5,14 @@
   "type": "module",
   "license": "MIT",
   "author": "Samiul Islam",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Samiu1/garmin-connect-mcp.git"
+  },
+  "homepage": "https://github.com/Samiu1/garmin-connect-mcp#readme",
+  "bugs": {
+    "url": "https://github.com/Samiu1/garmin-connect-mcp/issues"
+  },
   "bin": {
     "garmin-connect-mcp": "dist/index.js"
   },
