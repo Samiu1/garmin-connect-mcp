@@ -37,9 +37,10 @@ The spec is not vendored here, to avoid redistributing Garmin's document. Re-ext
 
 Already confirmed: the token exchange returns a 3-segment JWT whose `exp` parses and sits 23.94 hours out; the cache is written `0600` with the `fingerprint`/`access_token`/`expires_at` shape and is reused by a separate process without re-exchanging; all seven `garmin_get_daily_health` metrics return data on the test account; Markdown rendering was exercised on a real 7-night sleep payload.
 
+The refresh window and the 401 retry are now covered too, but **asserted offline rather than live**, since driving them for real means waiting out a 23-hour token. `getBearerToken` takes an optional `now` clock defaulting to `Date.now`, and the self-check drives it with a fabricated JWT, a throwaway `HOME` and a counting `fetch` stub, so no network call and no real cache file are involved. What it asserts: a cached token with 90 minutes left is reused with no exchange; one with 30 minutes left is re-exchanged although still valid; an expired one is re-exchanged; advancing the clock alone, with the cache untouched, is enough to trigger the refresh; a `401` on a data request forces exactly one re-exchange, with a second `401` surfacing as a credential error instead of looping, and a `401` followed by success is recovered by that one retry; and the cache the refresh rewrites is still `0600` with the same three keys. Each assertion was checked by deliberately breaking the thing it covers — widening the window to two hours, shrinking it to a minute, ignoring the injected clock, removing the retry, and retrying twice — and confirming the self-check went red in every case.
+
 Still open:
 
-- The forced re-exchange inside the one-hour refresh window. Needs an injectable clock to test without waiting 23 hours — worth adding, since this is the path that keeps long-running sessions alive.
 - Markdown rendering on a real *activity* payload, as opposed to a health payload.
 - `garmin_download_activity_file` against a real activity, including the `overwrite=false` refusal. Skipped so far because it writes to disk.
 

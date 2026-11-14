@@ -263,27 +263,34 @@ async function exchangeKeyForToken(
 let memoized: { fingerprint: string; token: CachedToken } | undefined;
 let inFlight: Promise<CachedToken> | undefined;
 
-function isUsable(token: CachedToken): boolean {
-  return token.expiresAt - Date.now() > TOKEN_REFRESH_WINDOW_MS;
+/** Source of the current time, so the refresh window can be tested. */
+type Clock = () => number;
+
+function isUsable(token: CachedToken, now: Clock): boolean {
+  return token.expiresAt - now() > TOKEN_REFRESH_WINDOW_MS;
 }
 
 /**
  * Returns a usable bearer token, reusing the in-memory and on-disk caches and
  * exchanging the API key only when needed. Concurrent callers share one exchange.
+ *
+ * `now` exists so the refresh window can be driven in a test rather than waited
+ * out over 23 hours; callers leave it at the real clock.
  */
 export async function getBearerToken(
   signal: AbortSignal,
-  forceRefresh = false
+  forceRefresh = false,
+  now: Clock = Date.now
 ): Promise<string> {
   const apiKey = resolveApiKey();
   const expected = fingerprint(baseUrl(), apiKey);
 
   if (!forceRefresh) {
-    if (memoized?.fingerprint === expected && isUsable(memoized.token)) {
+    if (memoized?.fingerprint === expected && isUsable(memoized.token, now)) {
       return memoized.token.accessToken;
     }
     const cached = readCachedToken(expected);
-    if (cached && isUsable(cached)) {
+    if (cached && isUsable(cached, now)) {
       memoized = { fingerprint: expected, token: cached };
       return cached.accessToken;
     }
