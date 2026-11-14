@@ -136,7 +136,7 @@ $dir = "$HOME\.config\garmin"; New-Item -ItemType Directory -Force -Path $dir | 
 Best for a one-off run, a CI job, or a shell where you want to override the others temporarily:
 
 ```bash
-GARMIN_PERSONAL_API_KEY=... npx -y @samiul_i/garmin-connect-mcp@1.0.1
+GARMIN_PERSONAL_API_KEY=... npx -y @samiul_i/garmin-connect-mcp@1.0.2
 ```
 
 Putting the key in an MCP client's `env` block works, since that reaches the server as this variable. It is the weakest option: it lands in plaintext in a config file that is routinely screenshotted and committed to dotfiles repositories, it has no guaranteed permissions, and it needs editing in every client each time the key expires.
@@ -182,7 +182,7 @@ With your key in `~/.config/garmin/connect-personal-api-key`, the configuration 
   "mcpServers": {
     "garmin": {
       "command": "npx",
-      "args": ["-y", "@samiul_i/garmin-connect-mcp@1.0.1"]
+      "args": ["-y", "@samiul_i/garmin-connect-mcp@1.0.2"]
     }
   }
 }
@@ -194,7 +194,7 @@ Where that goes:
 | --- | --- |
 | Claude Desktop (macOS) | `~/Library/Application Support/Claude/claude_desktop_config.json` |
 | Claude Desktop (Windows) | `%APPDATA%\Claude\claude_desktop_config.json` |
-| Claude Code | `.mcp.json` in the project, or `claude mcp add garmin -- npx -y @samiul_i/garmin-connect-mcp@1.0.1` |
+| Claude Code | `.mcp.json` in the project, or `claude mcp add garmin -- npx -y @samiul_i/garmin-connect-mcp@1.0.2` |
 | Cursor | `~/.cursor/mcp.json` |
 
 Restart the client after editing, then ask it something like "what did my Garmin record yesterday?"
@@ -208,7 +208,7 @@ If you chose the keychain (option A), add the command instead. This is still a c
   "mcpServers": {
     "garmin": {
       "command": "npx",
-      "args": ["-y", "@samiul_i/garmin-connect-mcp@1.0.1"],
+      "args": ["-y", "@samiul_i/garmin-connect-mcp@1.0.2"],
       "env": {
         "GARMIN_PERSONAL_API_KEY_COMMAND": "security find-generic-password -s garmin-personal-api -w"
       }

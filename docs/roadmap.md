@@ -2,7 +2,7 @@
 
 ## Status
 
-v1.0.1 — all 26 Garmin Connect Personal API endpoints covered by 10 tools, plus a passthrough. stdio transport only. Three credential sources: environment variable, a key command for OS keychains and password managers, and a key file. Published to npm as `@samiul_i/garmin-connect-mcp`, built and released from CI with provenance.
+v1.0.2 — all 26 Garmin Connect Personal API endpoints covered by 10 tools, plus a passthrough. stdio transport only. Three credential sources: environment variable, a key command for OS keychains and password managers, and a key file. Published to npm as `@samiul_i/garmin-connect-mcp`, built and released from CI with provenance.
 
 **Verified live against a real Garmin account.** The self-check passes with credentials, and all 25 pullable endpoints were probed directly: 23 returned data, 2 returned `204` (women's health, not tracked on that account), and none 404'd, so every path in the client is correct. The file-download endpoint has since been exercised too, against a real activity.
 
