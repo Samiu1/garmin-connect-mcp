@@ -1,6 +1,6 @@
 {
   "name": "@samiul_i/garmin-connect-mcp",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "description": "MCP server for the Garmin Connect Personal API. Each user supplies their own Personal API key.",
   "type": "module",
   "license": "MIT",
